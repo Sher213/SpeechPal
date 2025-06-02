@@ -10,9 +10,8 @@ import {
   CardContent,
   Input,
 } from '@mui/material';
-import Grid from '@mui/material/Grid';
-import ErrorBoundary from './ErrorBoundary';
-import { webmBlobToWavBlob } from './webmToWav';
+import ErrorBoundary from './ErrorBoundary'; // Assuming you have this component
+import { webmBlobToWavBlob } from './webmToWav'; // Assuming you have this utility
 import { RatingsChart } from './RatingsChart';
 
 interface SegmentAnalysis {
@@ -29,7 +28,7 @@ interface SegmentAnalysis {
   sentiment: Record<string, number> | number;
   emotion_audio: Array<Record<string, number>>;
   summary: string;
-  rate_reason: { rating: number; reason: string } | null;
+  rate_reason: { rate: number; reason: string } | null;
   excerpt: string;
 }
 
@@ -45,57 +44,13 @@ const SpeechRecorderContent: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<SpeechAnalysis | null>(null);
+  // Add a key to force RatingsChart remount when analysis changes
+  // This is crucial for ensuring the old Chart.js instance is destroyed.
+  const [ratingsChartKey, setRatingsChartKey] = useState<string>("");
 
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const animationFrameRef = useRef<number | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
-      cancelAnimationFrame(animationFrameRef.current!);
-    };
-  }, [audioUrl]);
-
-  const drawWaveform = () => {
-    const canvas = canvasRef.current;
-    const analyser = analyserRef.current;
-    if (!canvas || !analyser) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const bufferLength = analyser.fftSize;
-    const dataArray = new Uint8Array(bufferLength);
-
-    const draw = () => {
-      analyser.getByteTimeDomainData(dataArray);
-
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = '#1976d2';
-      ctx.beginPath();
-
-      const sliceWidth = canvas.width / bufferLength;
-      let x = 0;
-
-      for (let i = 0; i < bufferLength; i++) {
-        const v = dataArray[i] / 128.0;
-        const y = (v * canvas.height) / 2;
-        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-        x += sliceWidth;
-      }
-
-      ctx.lineTo(canvas.width, canvas.height / 2);
-      ctx.stroke();
-
-      animationFrameRef.current = requestAnimationFrame(draw);
-    };
-
-    draw();
-  };
 
   const startRecording = async () => {
     try {
@@ -109,8 +64,6 @@ const SpeechRecorderContent: React.FC = () => {
       analyserRef.current = audioContextRef.current.createAnalyser();
       analyserRef.current.fftSize = 1024;
       sourceRef.current.connect(analyserRef.current);
-
-      drawWaveform();
 
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
       mediaRecorderRef.current = recorder;
@@ -133,9 +86,7 @@ const SpeechRecorderContent: React.FC = () => {
     setIsLoading(true);
     setError(null);
 
-    cancelAnimationFrame(animationFrameRef.current!);
-    animationFrameRef.current = null;
-
+    // Close audio context and clear references on stop recording
     audioContextRef.current?.close();
     audioContextRef.current = null;
     analyserRef.current = null;
@@ -189,6 +140,14 @@ const SpeechRecorderContent: React.FC = () => {
     }
   };
 
+  // This useEffect updates the key for RatingsChart, forcing it to remount
+  // when the analysis data changes. This triggers the cleanup in RatingsChart.
+  useEffect(() => {
+    if (analysis && analysis.segments) {
+      setRatingsChartKey(JSON.stringify(analysis.segments.map(seg => seg.rate_reason?.rate)));
+    }
+  }, [analysis]); // Dependency on 'analysis' ensures key updates when new analysis is set
+
   return (
     <Box sx={{ maxWidth: 900, mx: 'auto', p: 3 }}>
       <Paper elevation={3} sx={{ p: 3, mb: 3 }}>
@@ -217,17 +176,6 @@ const SpeechRecorderContent: React.FC = () => {
           </label>
         </Box>
 
-        {isRecording && (
-          <Box sx={{ mb: 2, display: 'flex', justifyContent: 'center' }}>
-            <canvas
-              ref={canvasRef}
-              width={600}
-              height={120}
-              style={{ background: '#f5f5f5', borderRadius: 8, width: '100%', maxWidth: 600 }}
-            />
-          </Box>
-        )}
-
         {error && <Typography color="error" sx={{ mb: 2 }}>{error}</Typography>}
         {isLoading && <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}><CircularProgress /></Box>}
         {audioUrl && <Box sx={{ mb: 2 }}><audio src={audioUrl} controls /></Box>}
@@ -239,18 +187,22 @@ const SpeechRecorderContent: React.FC = () => {
             {analysis.segments.some(seg => seg.rate_reason) && (
               <Box sx={{ my: 4 }}>
                 <RatingsChart
+                  // The key prop is essential. When ratingsChartKey changes,
+                  // React unmounts the old RatingsChart component and mounts a new one.
+                  // This triggers the useEffect cleanup in RatingsChart to destroy the old chart.
+                  key={ratingsChartKey}
                   segments={analysis.segments
                     .filter(seg => seg.rate_reason)
                     .map(seg => ({
-                      rating: seg.rate_reason!.rating,
+                      rating: seg.rate_reason!.rate,
                       excerpt: seg.excerpt
                     }))}
                 />
               </Box>
             )}
-            <Grid container spacing={2}>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
               {analysis.segments.map((seg, idx) => (
-                <Grid item xs={12} md={6} key={idx}>
+                <Box key={idx} sx={{ flex: '1 1 45%', minWidth: 300, maxWidth: '48%' }}>
                   <Card variant="outlined">
                     <CardContent>
                       <Typography variant="subtitle1">Segment {idx + 1}</Typography>
@@ -264,7 +216,7 @@ const SpeechRecorderContent: React.FC = () => {
                       {seg.rate_reason && (
                         <Box sx={{ my: 2, p: 2, bgcolor: '#f0f4ff', borderRadius: 2 }}>
                           <Typography variant="body2" sx={{ fontWeight: 600, color: 'primary.main' }}>
-                            <strong>AI Rating:</strong> {seg.rate_reason.rating} / 10
+                            <strong>AI Rating:</strong> {seg.rate_reason.rate} / 10
                           </Typography>
                           <Typography variant="body2" sx={{ mt: 1 }}>
                             <strong>Reason:</strong> {seg.rate_reason.reason}
@@ -288,9 +240,9 @@ const SpeechRecorderContent: React.FC = () => {
                       </Box>
                     </CardContent>
                   </Card>
-                </Grid>
+                </Box>
               ))}
-            </Grid>
+            </Box>
           </Box>
         )}
       </Paper>

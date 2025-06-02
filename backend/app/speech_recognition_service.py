@@ -269,18 +269,15 @@ Audio Emotion Scores:
                 full_response += chunk.text
 
             # pull out the first numeric token
-            match = next(
-                (
-                    float(tok)
-                    for tok in full_response.split()
-                    if tok.replace(".", "", 1).isdigit()
-                ),
-                None
-            )
+            import re
+            match = None
+            num_match = re.search(r"(?<![\d.])([1-9]|10)(?:\.\d+)?(?![\d.])", full_response)
+            if num_match:
+                match = float(num_match.group(0))
 
-            reasoning = full_response.replace(str(match), "").strip() if match is not None else "No reasoning provided."
+            reasoning = full_response.replace(f"Rating: {str(match)}", "").strip() if match is not None else "No reasoning provided."
             
-            logger.info("Gemini response: %s", full_response)
+            logger.info("Gemini rating: %d, Gemini Reason: %s", match, reasoning)
 
             return {'rate': float(max(1.0, min(10.0, match))), 'reason': reasoning}
 
