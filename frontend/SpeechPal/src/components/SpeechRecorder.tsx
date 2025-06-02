@@ -8,13 +8,15 @@ import {
   CircularProgress,
   Card,
   CardContent,
-  Grid,
+  Input,
 } from '@mui/material';
+import Grid from '@mui/material/Grid';
 import ErrorBoundary from './ErrorBoundary';
 import { webmBlobToWavBlob } from './webmToWav';
+import { RatingsChart } from './RatingsChart';
 
 interface SegmentAnalysis {
-  timestamps: Array<{ start: number; end: number; text: string }>;
+  timestamps: string | Array<{ start: number; end: number; text: string }>;
   text: string;
   metrics: {
     duration_sec: number;
@@ -24,9 +26,11 @@ interface SegmentAnalysis {
     pitch_mean: number;
   };
   tone: Record<string, number>;
-  sentiment: Record<string, number>;
+  sentiment: Record<string, number> | number;
   emotion_audio: Array<Record<string, number>>;
   summary: string;
+  rate_reason: { rating: number; reason: string } | null;
+  excerpt: string;
 }
 
 interface SpeechAnalysis {
@@ -145,15 +149,7 @@ const SpeechRecorderContent: React.FC = () => {
           setAudioUrl(url);
 
           const wav = await webmBlobToWavBlob(blob);
-          const form = new FormData();
-          form.append('audio_file', wav, 'recording.wav');
-
-          const res = await axios.post<SpeechAnalysis>(
-            'http://localhost:8000/api/analyze-speech',
-            form,
-            { headers: { 'Content-Type': 'multipart/form-data' } }
-          );
-          setAnalysis(res.data);
+          await uploadAudioFile(wav);
         } catch (err: any) {
           console.error(err);
           setError(err.message || 'Analysis failed.');
@@ -166,19 +162,60 @@ const SpeechRecorderContent: React.FC = () => {
     });
   };
 
+  const uploadAudioFile = async (file: Blob) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append('audio_file', file, 'upload.wav');
+      const res = await axios.post<SpeechAnalysis>('http://localhost:8000/api/analyze-speech', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setAnalysis(res.data);
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || 'Upload failed.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const arrayBuffer = await file.arrayBuffer();
+      const blob = new Blob([arrayBuffer]);
+      await uploadAudioFile(blob);
+    }
+  };
+
   return (
     <Box sx={{ maxWidth: 900, mx: 'auto', p: 3 }}>
       <Paper elevation={3} sx={{ p: 3, mb: 3 }}>
         <Typography variant="h4" gutterBottom>Speech Coach</Typography>
-        <Button
-          variant="contained"
-          color={isRecording ? 'error' : 'primary'}
-          onClick={isRecording ? stopRecording : startRecording}
-          disabled={isLoading}
-          sx={{ mb: 2 }}
-        >
-          {isRecording ? 'Stop' : 'Record'}
-        </Button>
+
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 2 }}>
+          <Button
+            variant="contained"
+            color={isRecording ? 'error' : 'primary'}
+            onClick={isRecording ? stopRecording : startRecording}
+            disabled={isLoading}
+          >
+            {isRecording ? 'Stop Recording' : 'Start Recording'}
+          </Button>
+
+          <label htmlFor="file-upload">
+            <Input
+              id="file-upload"
+              type="file"
+              inputProps={{ accept: 'audio/*' }}
+              onChange={handleFileChange}
+              disabled={isLoading}
+              style={{ display: 'none' }}
+            />
+            <Button variant="outlined" component="span" disabled={isLoading}>Upload Audio</Button>
+          </label>
+        </Box>
 
         {isRecording && (
           <Box sx={{ mb: 2, display: 'flex', justifyContent: 'center' }}>
@@ -186,12 +223,7 @@ const SpeechRecorderContent: React.FC = () => {
               ref={canvasRef}
               width={600}
               height={120}
-              style={{
-                background: '#f5f5f5',
-                borderRadius: 8,
-                width: '100%',
-                maxWidth: 600,
-              }}
+              style={{ background: '#f5f5f5', borderRadius: 8, width: '100%', maxWidth: 600 }}
             />
           </Box>
         )}
@@ -203,6 +235,19 @@ const SpeechRecorderContent: React.FC = () => {
         {analysis && (
           <Box>
             <Typography variant="h6" gutterBottom>Analysis Results</Typography>
+            {/* Ratings Chart for segments with rate_reason */}
+            {analysis.segments.some(seg => seg.rate_reason) && (
+              <Box sx={{ my: 4 }}>
+                <RatingsChart
+                  segments={analysis.segments
+                    .filter(seg => seg.rate_reason)
+                    .map(seg => ({
+                      rating: seg.rate_reason!.rating,
+                      excerpt: seg.excerpt
+                    }))}
+                />
+              </Box>
+            )}
             <Grid container spacing={2}>
               {analysis.segments.map((seg, idx) => (
                 <Grid item xs={12} md={6} key={idx}>
@@ -216,16 +261,25 @@ const SpeechRecorderContent: React.FC = () => {
                       <Typography variant="body2"><strong>RMS:</strong> {seg.metrics.rms_mean.toFixed(2)}</Typography>
                       <Typography variant="body2" gutterBottom><strong>Pitch:</strong> {seg.metrics.pitch_mean.toFixed(1)}</Typography>
                       <Typography variant="body2"><strong>Summary:</strong> {seg.summary}</Typography>
-
+                      {seg.rate_reason && (
+                        <Box sx={{ my: 2, p: 2, bgcolor: '#f0f4ff', borderRadius: 2 }}>
+                          <Typography variant="body2" sx={{ fontWeight: 600, color: 'primary.main' }}>
+                            <strong>AI Rating:</strong> {seg.rate_reason.rating} / 10
+                          </Typography>
+                          <Typography variant="body2" sx={{ mt: 1 }}>
+                            <strong>Reason:</strong> {seg.rate_reason.reason}
+                          </Typography>
+                        </Box>
+                      )}
                       <Typography variant="body2" sx={{ mt: 1 }}><strong>Text Tone:</strong></Typography>
                       <Box component="ul" sx={{ pl: 2, mb: 1 }}>
                         {Object.entries(seg.tone).map(([tone, score]) => (
                           <li key={tone}>{tone}: {score.toFixed(2)}</li>
                         ))}
                       </Box>
-
-                      <Typography variant="body2"><strong>Sentiment:</strong> {Object.entries(seg.sentiment).map(([lab, sc]) => `${lab}(${sc.toFixed(2)})`).join(', ')}</Typography>
-
+                      <Typography variant="body2"><strong>Sentiment:</strong> {typeof seg.sentiment === 'object'
+                        ? Object.entries(seg.sentiment).map(([lab, sc]) => `${lab}(${sc.toFixed(2)})`).join(', ')
+                        : seg.sentiment.toFixed(2)}</Typography>
                       <Typography variant="body2" sx={{ mt: 1 }}><strong>Audio Emotion:</strong></Typography>
                       <Box component="ul" sx={{ pl: 2 }}>
                         {seg.emotion_audio.map((emo, i) => (

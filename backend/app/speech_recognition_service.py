@@ -1,3 +1,4 @@
+import traceback
 from transformers import (
     WhisperProcessor,
     WhisperForConditionalGeneration,
@@ -10,6 +11,7 @@ import numpy as np
 from typing import Dict, Any, List
 from ibm_watson.natural_language_understanding_v1 import NaturalLanguageUnderstandingV1
 from ibm_watson.natural_language_understanding_v1 import Features, EmotionOptions, SentimentOptions
+from ibm_watson import ApiException
 from ibm_cloud_sdk_core.authenticators import IAMAuthenticator
 from dotenv import load_dotenv
 import os
@@ -121,22 +123,44 @@ class SpeechRecognitionService:
 
     def analyze_text_tone(self, text: str) -> Dict[str, float]:
         logger.info("Analyzing text tone for: %s", text[:60])
-        """
-        Use IBM Watson NLU to get emotion and sentiment scores.
-        """
-        nlu_res = self.nlu.analyze(
-            text=text,
-            features=Features(
-                emotion=EmotionOptions(),
-                sentiment=SentimentOptions()
-            ),
-            language="en" # Specify the language
-        ).get_result()
-        emotion_scores = nlu_res.get("emotion", {}).get("document", {}).get("emotion", {})
-        sentiment_doc = nlu_res.get("sentiment", {}).get("document", {})
-        sentiment_scores = {sentiment_doc.get("label", ""): sentiment_doc.get("score", 0.0)}
-        logger.info("Tone scores: %s", {**emotion_scores, **sentiment_scores})
-        return {**emotion_scores, **sentiment_scores}
+        try:
+            nlu_res = self.nlu.analyze(
+                text=text,
+                features=Features(
+                    emotion=EmotionOptions(),
+                    sentiment=SentimentOptions()
+                ),
+                language="en"
+            ).get_result()
+
+            emotion_scores = nlu_res.get("emotion", {}).get("document", {}).get("emotion", {})
+            sentiment_doc = nlu_res.get("sentiment", {}).get("document", {})
+            sentiment_scores = {sentiment_doc.get("label", ""): sentiment_doc.get("score", 0.0)}
+
+            logger.info("Tone scores: %s", {**emotion_scores, **sentiment_scores})
+            return {**emotion_scores, **sentiment_scores}
+
+        except ApiException as e:
+            logger.error(
+                "IBM Watson NLU ApiException: Code=%s, Message=%s, X-global-transaction-id=%s",
+                e.code, e.message, e.http_response.headers.get("X-global-transaction-id") if e.http_response else "N/A"
+            )
+            logger.debug("Full response: %s", e.http_response.text if e.http_response else "No response body.")
+            logger.debug("Traceback:\n%s", traceback.format_exc())
+
+        except Exception as e:
+            logger.error("Unexpected error: %s", str(e))
+            logger.debug("Traceback:\n%s", traceback.format_exc())
+
+        # Fallback to Hugging Face
+        try:
+            hf_res = self.hf_tone_classifier(text)
+            logger.info("Fallback to Hugging Face tone scores: %s", hf_res)
+            return {item['label']: float(item['score']) for item in hf_res[0]}
+        except Exception as hf_e:
+            logger.error("Hugging Face fallback failed: %s", str(hf_e))
+            logger.debug("Traceback:\n%s", traceback.format_exc())
+            return {}
 
     def analyze_sentiment(self, text: str) -> Dict[str, float]:
         logger.info("Analyzing sentiment for: %s", text[:60])
@@ -184,31 +208,47 @@ class SpeechRecognitionService:
         logger.info("Calling Gemini to rate segment.")
         model = "gemini-2.0-flash"
 
-        # 1) system prompt to set behavior, 2) user prompt with the segment data
-        system_prompt = (
-            "You are a professional speech coach. "
-            "Rate the following speech segment on a scale of 1 to 10 based on clarity, tone, "
-            "fluency, and emotional expressiveness. "
-            "Respond with only a single numeric score."
-        )
         user_prompt = f"""
-**You are a professional speech coach.**
-**Rate the following speech segment on a scale of 1 to 10 based on clarity, tone, fluency, and emotional expressiveness.**
-**Respond with only a single numeric score.**
+You are a professional speech coach. Your job is to assess short speech segments from a communication skills training app.
+
+Evaluate each segment and assign a rating from 1 to 10 based on:
+- Clarity: How easy it is to understand the speaker
+- Fluency: Flow of words without stammering or excessive pauses
+- Tone: Appropriateness and modulation of the speaker's tone
+- Emotional Expressiveness: Variability and strength of emotional delivery
+
+Use this scale:
+
+- **1–3 (Poor)**: Unclear, hard to follow, disfluent, monotone, many filler words.
+- **4–6 (Fair)**: Understandable but missing strong fluency or emotional expression. Some filler words or flat tone.
+- **7–8 (Good)**: Clear, structured, good fluency, some expressiveness and tone variation.
+- **9–10 (Excellent)**: Confident, fluent, expressive, emotionally engaging, and well-paced.
+
+**Do not default to a 6 or 7.** Choose a score that aligns closely with the rubric. Be honest and constructive.
+
+Respond strictly in this format:
+
+---
+Rating: <a number from 1 to 10>
+
+Reason: <1–3 sentence explanation of the rating based on the segment qualities>
+---
+
+Here is the segment for evaluation:
 
 Text:
 {segment['text']}
 
-Metrics:
+Objective Speech Metrics:
 {segment['metrics']}
 
-Tone:
+Detected Emotional Tone (Text):
 {segment['tone']}
 
 Sentiment:
 {segment['sentiment']}
 
-Audio Emotion:
+Audio Emotion Scores:
 {segment['emotion_audio']}
 """
 
@@ -237,7 +277,12 @@ Audio Emotion:
                 ),
                 None
             )
-            return float(max(1.0, min(10.0, match))) if match is not None else 5.0
+
+            reasoning = full_response.replace(str(match), "").strip() if match is not None else "No reasoning provided."
+            
+            logger.info("Gemini response: %s", full_response)
+
+            return {'rate': float(max(1.0, min(10.0, match))), 'reason': reasoning}
 
         except Exception as e:
             logger.warning("Gemini rating failed: %s", e)
@@ -245,13 +290,19 @@ Audio Emotion:
 
     async def transcribe_audio(self, audio_file_path: str) -> Dict[str, Any]:
         logger.info(f"Transcribing audio file: {audio_file_path}")
-        waveform, sr = torchaudio.load(audio_file_path)
+        # Use torchaudio to load both wav and mp3 files
+        ext = os.path.splitext(audio_file_path)[1].lower()
+        if ext == '.mp3':
+            waveform, sr = torchaudio.load(audio_file_path, format='mp3')
+        else:
+            waveform, sr = torchaudio.load(audio_file_path)
         if waveform.shape[0] > 1:
+            logger.info("Averaging stereo to mono.")
             waveform = torch.mean(waveform, dim=0, keepdim=True)
         if sr != 16000:
+            logger.info(f"Resampling from {sr} to 16000 Hz.")
             waveform = torchaudio.transforms.Resample(sr, 16000)(waveform)
             sr = 16000
-
         logger.info(f"Loaded audio file: {audio_file_path}, Sample rate: {sr}, Channels: {waveform.shape[0]}")
         segments = self.split_audio(waveform, sr)
         logger.info(f"Split into {len(segments)} segments.")
@@ -262,14 +313,20 @@ Audio Emotion:
             text = trans['text']
             duration = len(seg) / sr
             wpm = len(text.split()) / (duration / 60)
-
+            logger.info(f"Segment text: {text}")
+            logger.info(f"Segment duration: {duration:.2f}s, WPM: {wpm:.2f}")
             tone = self.analyze_text_tone(text)
+            logger.info(f"Segment tone: {tone}")
             sentiment = 0.5  # placeholder or extract from tone
+            logger.info(f"Segment sentiment: {sentiment}")
             summary = self.summarize_content(text)
+            logger.info(f"Segment summary: {summary}")
             clarity = self.rate_clarity(text)
+            logger.info(f"Segment clarity: {clarity}")
             prosody = self.extract_prosodic_features(seg, sr)
+            logger.info(f"Segment prosody: {prosody}")
             audio_emotion = self.analyze_audio_emotion(seg)
-
+            logger.info(f"Segment audio emotion: {audio_emotion}")
             segment_data = {
                 "timestamps": trans["timestamps"],
                 "text": text,
@@ -284,10 +341,11 @@ Audio Emotion:
                 "emotion_audio": audio_emotion,
                 "summary": summary
             }
-
-            rating = self.rate_segment_with_gemini(segment_data)
+            logger.info(f"Segment data before Gemini: {segment_data}")
+            segment_rate_reason = self.rate_segment_with_gemini(segment_data)
             excerpt = text[:80] + "..." if len(text) > 80 else text
-            segment_data.update({"rating": rating, "excerpt": excerpt})
+            segment_data.update({"rate_reason": segment_rate_reason, "excerpt": excerpt})
+            logger.info(f"Segment data after Gemini: {segment_data}")
             results.append(segment_data)
-
+        logger.info("All segments processed. Returning results.")
         return {"segments": results}
