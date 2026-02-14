@@ -1,0 +1,89 @@
+Guide to Evaluating a Good Speech
+=====================================
+
+This guide serves as a knowledge base for assessing the quality of speech segments based on key metrics.
+
+1. Metrics Overview
+-------------------
+- Duration (seconds): Length of the segment in seconds.
+- Words Per Minute (WPM): Rate of speech; ideal range is 110–150 WPM.
+- Clarity (0.0–1.0): Enunciation quality; higher is clearer.
+- RMS Mean: Loudness/energy level; moderate consistency is best.
+- Pitch Mean (Hz): Average pitch; variation is more important than absolute value.
+- Detected Tone: Overall tone classification (e.g., confident, analytical).
+- Sentiment Score (-1.0–1.0): Positive to negative emotional valence.
+- Audio Emotion Scores: Breakdown of emotions (e.g., joy, confidence, fear).
+
+2. 1–10 Rating System
+----------------------
+For each metric, assign a score from 1 (poor) to 10 (excellent):
+
+- **Duration**:  
+  1 = <2s or >15s (too short/long),  
+  10 = 3–10s (ideal).
+
+- **WPM**:  
+  1 = <80 or >170,  
+  10 = 110–150.
+
+- **Clarity**:  
+  1 = <0.5,  
+  10 = ≥0.9.
+
+- **RMS Mean**:  
+  1 = Extremely low or high inconsistent levels,  
+  10 = Consistent moderate level.
+
+- **Pitch Variation**:  
+  1 = Monotone (std dev <5 Hz),  
+  10 = Dynamic variation (std dev ≥20 Hz).
+
+- **Tone Appropriateness**:  
+  1 = Mismatch to content,  
+  10 = Perfect match (e.g., persuasive → confident).
+
+- **Sentiment**:  
+  1 = Highly negative or overly effusive,  
+  10 = Balanced positive/neutral (0.1–0.5).
+
+- **Emotional Expressiveness**:  
+  1 = Flat or extreme negative,  
+  10 = Balanced joy/confidence with subtle urgency (~20–40% joy, ~30–50% confidence, ~10–20% urgency).
+
+3. Calculating Overall Score
+----------------------------
+- Compute each metric’s 1–10 score.
+- Optionally apply weights (e.g., Clarity & WPM 20% each, others 10% each).
+- Sum to a total out of 100, then scale to 1–10.
+
+4. Detailed Example
+-------------------
+Segment Text:
+"Our mission is to innovate and inspire every day."
+
+Metrics:
+- Duration: 4.50s → Score: 10
+- WPM: 130.0 → Score: 9
+- Clarity: 0.85 → Score: 8
+- RMS Mean: 0.0500 → Score: 9
+- Pitch Std Dev: 18.0 Hz → Score: 8
+- Tone: confident → Score: 10
+- Sentiment: 0.30 → Score: 9
+- Emotions: {joy:0.35, confidence:0.45, urgency:0.15} → Score: 9
+
+Weighted Scores (example weights in %):
+- WPM (20%): 9 * 0.2 = 1.8
+- Clarity (20%): 8 * 0.2 = 1.6
+- Duration (10%): 10 * 0.1 = 1.0
+- RMS (10%): 9 * 0.1 = 0.9
+- Pitch (10%): 8 * 0.1 = 0.8
+- Tone (10%): 10 * 0.1 = 1.0
+- Sentiment (10%): 9 * 0.1 = 0.9
+- Emotions (10%): 9 * 0.1 = 0.9
+
+Total = 1.8+1.6+1.0+0.9+0.8+1.0+0.9+0.9 = 9.0/10
+
+Conclusion:
+A score of 9/10 indicates a highly effective segment.
+
+Use this guide to score and improve each part of your speech for maximum impact.

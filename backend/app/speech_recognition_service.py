@@ -18,6 +18,8 @@ import os
 import logging
 from google import genai
 from google.genai import types
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 
 load_dotenv()
@@ -74,14 +76,28 @@ class SpeechRecognitionService:
         )
 
         logger.info("Loaded audio emotion classifier.")
+        self.executor = ThreadPoolExecutor(max_workers=4)
+        self.loop = asyncio.get_event_loop()
+        # --- RAG: Load speech guide ---
+        self.speech_guide_path = os.path.join(os.path.dirname(__file__), "../speech_guide.txt")
+        try:
+            with open(self.speech_guide_path, "r", encoding="utf-8") as f:
+                self.speech_guide = f.read()
+            logger.info("Loaded speech guide for RAG.")
+        except Exception as e:
+            logger.warning(f"Could not load speech guide: {e}")
+            self.speech_guide = ""
 
-    def split_audio(
+    async def split_audio(
         self,
         waveform: torch.Tensor,
         sample_rate: int,
         segment_length: float = 15.0
     ) -> List[np.ndarray]:
         logger.info(f"Splitting audio: {waveform.shape[1]/sample_rate:.2f}s into {segment_length}s segments.")
+        return await self.loop.run_in_executor(self.executor, self._split_audio_sync, waveform, sample_rate, segment_length)
+
+    def _split_audio_sync(self, waveform, sample_rate, segment_length):
         total_samples = waveform.shape[1]
         segment_samples = int(segment_length * sample_rate)
         segments = []
@@ -92,7 +108,10 @@ class SpeechRecognitionService:
         logger.info("Splitting complete. Total segments: %d", len(segments))
         return segments
 
-    def transcribe_segment(self, audio_np: np.ndarray) -> Dict[str, Any]:
+    async def transcribe_segment(self, audio_np: np.ndarray) -> Dict[str, Any]:
+        return await self.loop.run_in_executor(self.executor, self._transcribe_segment_sync, audio_np)
+
+    def _transcribe_segment_sync(self, audio_np):
         logger.info("Transcribing audio segment of length %.2fs", len(audio_np)/16000)
         inputs = self.processor(
             audio_np,
@@ -121,7 +140,10 @@ class SpeechRecognitionService:
         logger.info("Transcription with timestamps complete.")
         return {"text": transcription, "timestamps": segments}
 
-    def analyze_text_tone(self, text: str) -> Dict[str, float]:
+    async def analyze_text_tone(self, text: str) -> Dict[str, float]:
+        return await self.loop.run_in_executor(self.executor, self._analyze_text_tone_sync, text)
+
+    def _analyze_text_tone_sync(self, text):
         logger.info("Analyzing text tone for: %s", text[:60])
         try:
             nlu_res = self.nlu.analyze(
@@ -162,20 +184,26 @@ class SpeechRecognitionService:
             logger.debug("Traceback:\n%s", traceback.format_exc())
             return {}
 
-    def analyze_sentiment(self, text: str) -> Dict[str, float]:
+    async def analyze_sentiment(self, text: str) -> Dict[str, float]:
         logger.info("Analyzing sentiment for: %s", text[:60])
         # Optional: local HF fallback
         res = self.sentiment_analyzer(text)[0]
         logger.info("Sentiment: %s", res)
         return {res['label']: float(res['score'])}
 
-    def summarize_content(self, text: str) -> str:
+    async def summarize_content(self, text: str) -> str:
+        return await self.loop.run_in_executor(self.executor, self._summarize_content_sync, text)
+
+    def _summarize_content_sync(self, text):
         logger.info("Summarizing content for: %s", text[:60])
         summary = self.summarizer(text, max_length=50, min_length=20, do_sample=False)[0]
         logger.info("Summary: %s", summary['summary_text'])
         return summary['summary_text']
 
-    def rate_clarity(self, text: str) -> float:
+    async def rate_clarity(self, text: str) -> float:
+        return await self.loop.run_in_executor(self.executor, self._rate_clarity_sync, text)
+
+    def _rate_clarity_sync(self, text):
         logger.info("Rating clarity for: %s", text[:60])
         fillers = ["um", "uh", "like", "you know", "so", "actually"]
         words = text.lower().split()
@@ -185,11 +213,14 @@ class SpeechRecognitionService:
         logger.info("Clarity score: %.2f", clarity_score)
         return clarity_score
 
-    def extract_prosodic_features(
+    async def extract_prosodic_features(
         self,
         audio_np: np.ndarray,
         sr: int = 16000
     ) -> Dict[str, float]:
+        return await self.loop.run_in_executor(self.executor, self._extract_prosodic_features_sync, audio_np, sr)
+
+    def _extract_prosodic_features_sync(self, audio_np, sr):
         logger.info("Extracting prosodic features.")
         rms = librosa.feature.rms(y=audio_np)[0]
         pitches, magnitudes = librosa.piptrack(y=audio_np, sr=sr)
@@ -198,33 +229,72 @@ class SpeechRecognitionService:
         logger.info("RMS mean: %.4f, Pitch mean: %.2f", float(np.mean(rms)), pitch_mean)
         return {"rms_mean": float(np.mean(rms)), "pitch_mean": pitch_mean}
 
-    def analyze_audio_emotion(self, audio_np: np.ndarray) -> List[Dict[str, float]]:
+    async def analyze_audio_emotion(self, audio_np: np.ndarray) -> List[Dict[str, float]]:
+        return await self.loop.run_in_executor(self.executor, self._analyze_audio_emotion_sync, audio_np)
+
+    def _analyze_audio_emotion_sync(self, audio_np):
         logger.info("Analyzing audio emotion.")
         res = self.audio_emotion_classifier(audio_np)
         logger.info("Audio emotion: %s", res)
         return [{item['label']: float(item['score'])} for item in res]
     
-    def rate_segment_with_gemini(self, segment: Dict[str, Any]) -> float:
+    async def rate_segment_with_gemini(self, segment: Dict[str, Any]) -> float:
+        return await self.loop.run_in_executor(self.executor, self._rate_segment_with_gemini_sync, segment)
+
+    def _retrieve_guide_context(self, segment_text: str, top_n: int = 3) -> str:
+        """
+        Simple keyword-based retrieval: returns the most relevant lines from the guide.
+        """
+        import re
+        if not self.speech_guide:
+            return ""
+        lines = self.speech_guide.splitlines()
+        words = set(re.findall(r'\w+', segment_text.lower()))
+        scored = []
+        for line in lines:
+            line_words = set(re.findall(r'\w+', line.lower()))
+            score = len(words & line_words)
+            if score > 0:
+                scored.append((score, line))
+        top_lines = [line for _, line in sorted(scored, reverse=True)[:top_n]]
+        return "\n".join(top_lines)
+
+    def _rate_segment_with_gemini_sync(self, segment):
         logger.info("Calling Gemini to rate segment.")
         model = "gemini-2.0-flash"
 
+        # --- RAG: Retrieve context from speech guide ---
+        guide_context = self._retrieve_guide_context(segment['text'])
+        if guide_context:
+            rag_section = f"\n\n[Speech Guide Context]\n{guide_context}\n"
+        else:
+            rag_section = ""
+
         user_prompt = f"""
-You are a professional speech coach. Your job is to assess short speech segments from a communication skills training app.
+You are a professional speech coach assessing a single speech segment.  
+{rag_section}
+Here are the fields you must use for your rating:
+• Text: {segment['text']}  
+• Metrics: duration_sec={segment['metrics']['duration_sec']:.2f}, wpm={segment['metrics']['wpm']:.1f}, clarity={segment['metrics']['clarity']:.1f}, rms_mean={segment['metrics']['rms_mean']:.4f}, pitch_mean={segment['metrics']['pitch_mean']:.2f}  
+• Detected Tone: {segment['tone']}  
+• Sentiment Score: {segment['sentiment']}  
+• Audio Emotion Scores: {segment['emotion_audio']}  
 
-Evaluate each segment and assign a rating from 1 to 10 based on:
-- Clarity: How easy it is to understand the speaker
-- Fluency: Flow of words without stammering or excessive pauses
-- Tone: Appropriateness and modulation of the speaker's tone
-- Emotional Expressiveness: Variability and strength of emotional delivery
+**Rating Rules (1–10)**  
+1. **Scale usage**:  
+   - 1–3 = Poor (many issues: very low clarity or extreme monotone, lots of filler)  
+   - 4–6 = Fair (minor issues, some filler, moderate prosody)  
+   - 7–8 = Good (clear, fluent, some expressiveness)  
+   - 9–10 = Excellent (confident, engaging, emotionally strong)  
 
-Use this scale:
+2. **Metric thresholds**:  
+   - If clarity drops >30% vs. your previous segment, lower rating by ≥2 points.  
+   - If WPM deviates >25% from ideal (120 ± 20 WPM), adjust rating by ≥1 point.  
+   - If pitch variance is high (stddev of pitch > median), bump rating by +1 for expressiveness.
 
-- **1–3 (Poor)**: Unclear, hard to follow, disfluent, monotone, many filler words.
-- **4–6 (Fair)**: Understandable but missing strong fluency or emotional expression. Some filler words or flat tone.
-- **7–8 (Good)**: Clear, structured, good fluency, some expressiveness and tone variation.
-- **9–10 (Excellent)**: Confident, fluent, expressive, emotionally engaging, and well-paced.
-
-**Do not default to a 6 or 7.** Choose a score that aligns closely with the rubric. Be honest and constructive.
+3. **Diversity enforcement**:  
+   - You may not give the same rating as the previous segment unless **all** metrics (clarity, wpm, prosody) differ by <5%.  
+   - At least one segment out of every five must fall in 1–3 or 9–10 to ensure scale coverage.
 
 Respond strictly in this format:
 
@@ -251,10 +321,8 @@ Sentiment:
 Audio Emotion Scores:
 {segment['emotion_audio']}
 """
-
         contents = [
-            # types.Content(role="system", parts=[types.Part.from_text(text=system_prompt)]), NOT SUPPORTED
-            types.Content(role="user",   parts=[types.Part.from_text(text=user_prompt)]),
+            types.Content(role="user", parts=[types.Part.from_text(text=user_prompt)]),
         ]
 
         config = types.GenerateContentConfig(response_mime_type="text/plain")
@@ -276,9 +344,7 @@ Audio Emotion Scores:
                 match = float(num_match.group(0))
 
             reasoning = full_response.replace(f"Rating: {str(match)}", "").strip() if match is not None else "No reasoning provided."
-            
             logger.info("Gemini rating: %d, Gemini Reason: %s", match, reasoning)
-
             return {'rate': float(max(1.0, min(10.0, match))), 'reason': reasoning}
 
         except Exception as e:
@@ -290,59 +356,52 @@ Audio Emotion Scores:
         # Use torchaudio to load both wav and mp3 files
         ext = os.path.splitext(audio_file_path)[1].lower()
         if ext == '.mp3':
-            waveform, sr = torchaudio.load(audio_file_path, format='mp3')
+            waveform, sr = await self.loop.run_in_executor(self.executor, torchaudio.load, audio_file_path, 'mp3')
         else:
-            waveform, sr = torchaudio.load(audio_file_path)
+            waveform, sr = await self.loop.run_in_executor(self.executor, torchaudio.load, audio_file_path)
         if waveform.shape[0] > 1:
             logger.info("Averaging stereo to mono.")
             waveform = torch.mean(waveform, dim=0, keepdim=True)
         if sr != 16000:
-            logger.info(f"Resampling from {sr} to 16000 Hz.")
-            waveform = torchaudio.transforms.Resample(sr, 16000)(waveform)
+            waveform = await self.loop.run_in_executor(self.executor, torchaudio.transforms.Resample(sr, 16000) , waveform)
             sr = 16000
         logger.info(f"Loaded audio file: {audio_file_path}, Sample rate: {sr}, Channels: {waveform.shape[0]}")
-        segments = self.split_audio(waveform, sr)
+        segments = await self.split_audio(waveform, sr)
         logger.info(f"Split into {len(segments)} segments.")
         results = []
+        tasks = []
         for seg in segments:
-            logger.info("Processing segment of length %.2fs", len(seg)/sr)
-            trans = self.transcribe_segment(seg)
-            text = trans['text']
-            duration = len(seg) / sr
-            wpm = len(text.split()) / (duration / 60)
-            logger.info(f"Segment text: {text}")
-            logger.info(f"Segment duration: {duration:.2f}s, WPM: {wpm:.2f}")
-            tone = self.analyze_text_tone(text)
-            logger.info(f"Segment tone: {tone}")
-            sentiment = 0.5  # placeholder or extract from tone
-            logger.info(f"Segment sentiment: {sentiment}")
-            summary = self.summarize_content(text)
-            logger.info(f"Segment summary: {summary}")
-            clarity = self.rate_clarity(text)
-            logger.info(f"Segment clarity: {clarity}")
-            prosody = self.extract_prosodic_features(seg, sr)
-            logger.info(f"Segment prosody: {prosody}")
-            audio_emotion = self.analyze_audio_emotion(seg)
-            logger.info(f"Segment audio emotion: {audio_emotion}")
-            segment_data = {
-                "timestamps": trans["timestamps"],
-                "text": text,
-                "metrics": {
-                    "duration_sec": duration,
-                    "wpm": wpm,
-                    "clarity": clarity,
-                    **prosody
-                },
-                "tone": tone,
-                "sentiment": sentiment,
-                "emotion_audio": audio_emotion,
-                "summary": summary
-            }
-            logger.info(f"Segment data before Gemini: {segment_data}")
-            segment_rate_reason = self.rate_segment_with_gemini(segment_data)
-            excerpt = text[:80] + "..." if len(text) > 80 else text
-            segment_data.update({"rate_reason": segment_rate_reason, "excerpt": excerpt})
-            logger.info(f"Segment data after Gemini: {segment_data}")
-            results.append(segment_data)
+            tasks.append(self._process_segment(seg, sr))
+        results = await asyncio.gather(*tasks)
         logger.info("All segments processed. Returning results.")
         return {"segments": results}
+
+    async def _process_segment(self, seg, sr):
+        trans = await self.transcribe_segment(seg)
+        text = trans['text']
+        duration = len(seg) / sr
+        wpm = len(text.split()) / (duration / 60)
+        tone = await self.analyze_text_tone(text)
+        sentiment = 0.5  # placeholder or extract from tone
+        summary = await self.summarize_content(text)
+        clarity = await self.rate_clarity(text)
+        prosody = await self.extract_prosodic_features(seg, sr)
+        audio_emotion = await self.analyze_audio_emotion(seg)
+        segment_data = {
+            "timestamps": trans["timestamps"],
+            "text": text,
+            "metrics": {
+                "duration_sec": duration,
+                "wpm": wpm,
+                "clarity": clarity,
+                **prosody
+            },
+            "tone": tone,
+            "sentiment": sentiment,
+            "emotion_audio": audio_emotion,
+            "summary": summary
+        }
+        segment_rate_reason = await self.rate_segment_with_gemini(segment_data)
+        excerpt = text[:80] + "..." if len(text) > 80 else text
+        segment_data.update({"rate_reason": segment_rate_reason, "excerpt": excerpt})
+        return segment_data
