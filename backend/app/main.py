@@ -1,6 +1,6 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from .speech_recognition_service import SpeechRecognitionService
+from speech_recognition_service import SpeechRecognitionService
 import os
 import tempfile
 from typing import Dict, Any
@@ -30,6 +30,7 @@ async def analyze_speech(audio_file: UploadFile = File(...)) -> Dict[str, Any]:
     try:
         # Directly analyze speech, do not check WAV header
         result = await speech_service.transcribe_audio(temp_file_path)
+        
         return result
     except Exception as e:
         return {"error": str(e)}

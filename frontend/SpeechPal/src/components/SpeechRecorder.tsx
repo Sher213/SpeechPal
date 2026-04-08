@@ -10,26 +10,26 @@ import {
   CardContent,
   Input,
 } from '@mui/material';
-import ErrorBoundary from './ErrorBoundary'; // Assuming you have this component
-import { webmBlobToWavBlob } from './webmToWav'; // Assuming you have this utility
+import ErrorBoundary from './ErrorBoundary';
+import { webmBlobToWavBlob } from './webmToWav';
 import { RatingsChart } from './RatingsChart';
 
 interface SegmentAnalysis {
   timestamps: string | Array<{ start: number; end: number; text: string }>;
   text: string;
   metrics: {
-    duration_sec: number;
-    wpm: number;
-    clarity: number;
-    rms_mean: number;
-    pitch_mean: number;
+    duration_sec?: number;
+    wpm?: number;
+    clarity?: number;
+    rms_mean?: number;
+    pitch_mean?: number;
   };
-  tone: Record<string, number>;
-  sentiment: Record<string, number> | number;
-  emotion_audio: Array<Record<string, number>>;
-  summary: string;
-  rate_reason: { rate: number; reason: string } | null;
-  excerpt: string;
+  tone?: Record<string, number>;
+  sentiment?: Record<string, number> | number;
+  emotion_audio?: Array<Record<string, number>>;
+  summary?: string;
+  rate_reason?: { rate: number; reason: string } | null;
+  excerpt?: string;
 }
 
 interface SpeechAnalysis {
@@ -42,15 +42,19 @@ const SpeechRecorderContent: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null); // for playback
   const [analysis, setAnalysis] = useState<SpeechAnalysis | null>(null);
-  // Add a key to force RatingsChart remount when analysis changes
-  // This is crucial for ensuring the old Chart.js instance is destroyed.
-  const [ratingsChartKey, setRatingsChartKey] = useState<string>("");
+  const [ratingsChartKey, setRatingsChartKey] = useState<string>('');
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+
+  const formatNumber = (num: any, decimals = 2) => {
+    const n = Number(num);
+    if (isNaN(n)) return 'N/A';
+    return n.toFixed(decimals);
+  };
 
   const startRecording = async () => {
     try {
@@ -86,7 +90,6 @@ const SpeechRecorderContent: React.FC = () => {
     setIsLoading(true);
     setError(null);
 
-    // Close audio context and clear references on stop recording
     audioContextRef.current?.close();
     audioContextRef.current = null;
     analyserRef.current = null;
@@ -97,7 +100,7 @@ const SpeechRecorderContent: React.FC = () => {
         try {
           const blob = new Blob(audioChunksRef.current, { type: 'audio/webm;codecs=opus' });
           const url = URL.createObjectURL(blob);
-          setAudioUrl(url);
+          setAudioUrl(url); // save for re-listening
 
           const wav = await webmBlobToWavBlob(blob);
           await uploadAudioFile(wav);
@@ -134,24 +137,33 @@ const SpeechRecorderContent: React.FC = () => {
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      const url = URL.createObjectURL(file);
+      setAudioUrl(url); // allow playback immediately
       const arrayBuffer = await file.arrayBuffer();
       const blob = new Blob([arrayBuffer]);
       await uploadAudioFile(blob);
     }
   };
 
-  // This useEffect updates the key for RatingsChart, forcing it to remount
-  // when the analysis data changes. This triggers the cleanup in RatingsChart.
   useEffect(() => {
     if (analysis && analysis.segments) {
       setRatingsChartKey(JSON.stringify(analysis.segments.map(seg => seg.rate_reason?.rate)));
     }
-  }, [analysis]); // Dependency on 'analysis' ensures key updates when new analysis is set
+  }, [analysis]);
 
   return (
     <Box sx={{ maxWidth: 900, mx: 'auto', p: 3 }}>
       <Paper elevation={3} sx={{ p: 3, mb: 3 }}>
-        <Typography variant="h4" gutterBottom>Speech Coach</Typography>
+        {/* Banner Image */}
+        <Box sx={{ mb: 2, textAlign: 'center' }}>
+          <img 
+            src="assets/speechpal_banner.png" 
+            alt="SpeechPal Banner" 
+            style={{ maxWidth: '100%', height: 'auto', borderRadius: 8 }}
+          />
+        </Box>
+
+        <Typography variant="h4" gutterBottom>SpeechPal</Typography>
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 2 }}>
           <Button
@@ -178,64 +190,72 @@ const SpeechRecorderContent: React.FC = () => {
 
         {error && <Typography color="error" sx={{ mb: 2 }}>{error}</Typography>}
         {isLoading && <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}><CircularProgress /></Box>}
-        {audioUrl && <Box sx={{ mb: 2 }}><audio src={audioUrl} controls /></Box>}
+
+        {/* Audio playback */}
+        {audioUrl && (
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="subtitle2">Re-listen to your audio:</Typography>
+            <audio src={audioUrl} controls />
+          </Box>
+        )}
 
         {analysis && (
           <Box>
             <Typography variant="h6" gutterBottom>Analysis Results</Typography>
-            {/* Ratings Chart for segments with rate_reason */}
             {analysis.segments.some(seg => seg.rate_reason) && (
               <Box sx={{ my: 4 }}>
                 <RatingsChart
-                  // The key prop is essential. When ratingsChartKey changes,
-                  // React unmounts the old RatingsChart component and mounts a new one.
-                  // This triggers the useEffect cleanup in RatingsChart to destroy the old chart.
                   key={ratingsChartKey}
                   segments={analysis.segments
                     .filter(seg => seg.rate_reason)
                     .map(seg => ({
                       rating: seg.rate_reason!.rate,
-                      excerpt: seg.excerpt
+                      excerpt: seg.excerpt ?? ''
                     }))}
                 />
               </Box>
             )}
+
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
               {analysis.segments.map((seg, idx) => (
                 <Box key={idx} sx={{ flex: '1 1 45%', minWidth: 300, maxWidth: '48%' }}>
                   <Card variant="outlined">
                     <CardContent>
                       <Typography variant="subtitle1">Segment {idx + 1}</Typography>
-                      <Typography variant="body2" paragraph><strong>Text:</strong> {seg.text}</Typography>
-                      <Typography variant="body2"><strong>WPM:</strong> {seg.metrics.wpm.toFixed(1)}</Typography>
-                      <Typography variant="body2"><strong>Clarity:</strong> {seg.metrics.clarity.toFixed(1)}/10</Typography>
-                      <Typography variant="body2"><strong>Duration:</strong> {seg.metrics.duration_sec.toFixed(1)}s</Typography>
-                      <Typography variant="body2"><strong>RMS:</strong> {seg.metrics.rms_mean.toFixed(2)}</Typography>
-                      <Typography variant="body2" gutterBottom><strong>Pitch:</strong> {seg.metrics.pitch_mean.toFixed(1)}</Typography>
-                      <Typography variant="body2"><strong>Summary:</strong> {seg.summary}</Typography>
+                      <Typography variant="body2" paragraph><strong>Text:</strong> {seg.text ?? 'N/A'}</Typography>
+                      <Typography variant="body2"><strong>WPM:</strong> {formatNumber(seg.metrics?.wpm, 1)}</Typography>
+                      <Typography variant="body2"><strong>Clarity:</strong> {formatNumber(seg.metrics?.clarity, 1)}/10</Typography>
+                      <Typography variant="body2"><strong>Duration:</strong> {formatNumber(seg.metrics?.duration_sec, 1)}s</Typography>
+                      <Typography variant="body2"><strong>RMS:</strong> {formatNumber(seg.metrics?.rms_mean, 2)}</Typography>
+                      <Typography variant="body2" gutterBottom><strong>Pitch:</strong> {formatNumber(seg.metrics?.pitch_mean, 1)}</Typography>
+                      <Typography variant="body2" gutterBottom><strong>Summary:</strong> {seg.summary ?? 'N/A'}</Typography>
+
                       {seg.rate_reason && (
                         <Box sx={{ my: 2, p: 2, bgcolor: '#f0f4ff', borderRadius: 2 }}>
                           <Typography variant="body2" sx={{ fontWeight: 600, color: 'primary.main' }}>
-                            <strong>AI Rating:</strong> {seg.rate_reason.rate} / 10
+                            <strong>AI Rating:</strong> {formatNumber(seg.rate_reason.rate, 1)} / 10
                           </Typography>
                           <Typography variant="body2" sx={{ mt: 1 }}>
-                            <strong>Reason:</strong> {seg.rate_reason.reason}
+                            <strong>Reason:</strong> {seg.rate_reason.reason ?? 'N/A'}
                           </Typography>
                         </Box>
                       )}
+
                       <Typography variant="body2" sx={{ mt: 1 }}><strong>Text Tone:</strong></Typography>
                       <Box component="ul" sx={{ pl: 2, mb: 1 }}>
-                        {Object.entries(seg.tone).map(([tone, score]) => (
-                          <li key={tone}>{tone}: {score.toFixed(2)}</li>
+                        {Object.entries(seg.tone ?? {}).map(([tone, score]) => (
+                          <li key={tone}>{tone}: {formatNumber(score, 2)}</li>
                         ))}
                       </Box>
+
                       <Typography variant="body2"><strong>Sentiment:</strong> {typeof seg.sentiment === 'object'
-                        ? Object.entries(seg.sentiment).map(([lab, sc]) => `${lab}(${sc.toFixed(2)})`).join(', ')
-                        : seg.sentiment.toFixed(2)}</Typography>
+                        ? Object.entries(seg.sentiment ?? {}).map(([lab, sc]) => `${lab}(${formatNumber(sc, 2)})`).join(', ')
+                        : formatNumber(seg.sentiment as number, 2)}</Typography>
+
                       <Typography variant="body2" sx={{ mt: 1 }}><strong>Audio Emotion:</strong></Typography>
                       <Box component="ul" sx={{ pl: 2 }}>
-                        {seg.emotion_audio.map((emo, i) => (
-                          <li key={i}>{Object.entries(emo).map(([lab, sc]) => `${lab}: ${sc.toFixed(2)}`).join(', ')}</li>
+                        {(seg.emotion_audio ?? []).map((emo, i) => (
+                          <li key={i}>{Object.entries(emo).map(([sc, lab]) => `${sc}: ${lab}`).join(', ')}</li>
                         ))}
                       </Box>
                     </CardContent>

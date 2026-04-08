@@ -1,101 +1,188 @@
-# Speech Coach App
+# 🎙️ SpeechPal --- Real-Time AI Speech Coach
 
-A real-time speech analysis application that provides feedback on speech quality, tone, clarity, and content using Whisper AI and sentiment analysis.
+SpeechPal is an AI-powered speech coaching application that analyzes how
+you speak --- not just what you say.
 
-## Features
+It provides real-time insights on clarity, tone, pacing, and sentiment,
+helping users improve communication for interviews, presentations, sales
+calls, and more.
 
-- Real-time speech recording
-- Speech-to-text transcription using Whisper AI
-- Sentiment analysis
-- Speech rate analysis
-- Interactive visualization of speech metrics
-- Modern Material-UI interface
+------------------------------------------------------------------------
 
-## Prerequisites
+## 🚀 Features
 
-- Python 3.8+
-- Node.js 14+
-- npm or yarn
+### 🎧 Real-Time Speech Processing
 
-## Setup
+-   Live audio recording from the browser\
+-   Seamless audio pipeline (buffer → WAV → processing)
 
-### Backend Setup
+### 🧠 AI-Powered Analysis
 
-1. Navigate to the backend directory:
-```bash
-cd backend
+-   Speech-to-text transcription using Whisper\
+-   Sentiment and tone detection\
+-   Context-aware feedback generation
+
+### 📊 Speech Metrics & Insights
+
+-   Speech rate (words per minute)\
+-   Clarity and delivery scoring\
+-   Segment-level analysis of speech patterns
+
+### 📈 Interactive Visualization
+
+-   Dynamic charts for speech metrics\
+-   Visual breakdown of tone and pacing\
+-   Real-time feedback interface
+
+### 🎨 Modern UI
+
+-   Built with Material-UI for a clean, responsive experience\
+-   Smooth user interaction and intuitive controls
+
+------------------------------------------------------------------------
+
+## 🏗️ Architecture Overview
+
+    Frontend (React + TypeScript)
+            ↓
+    Audio Recording (Browser)
+            ↓
+    Backend API (FastAPI)
+            ↓
+    Audio Processing Pipeline
+       • Format conversion
+       • Whisper transcription
+       • Sentiment analysis
+       • Metric extraction
+            ↓
+    Results + Visualization
+
+------------------------------------------------------------------------
+
+## 🛠️ Tech Stack
+
+### Backend
+
+-   FastAPI\
+-   Python\
+-   PyTorch\
+-   Whisper (Speech-to-Text)
+
+### Frontend
+
+-   React\
+-   TypeScript\
+-   Material-UI\
+-   D3.js
+
+### Other
+
+-   Axios (API communication)
+
+------------------------------------------------------------------------
+
+## ⚙️ Setup Instructions
+
+### 1. Clone the Repository
+
+``` bash
+git clone https://github.com/yourusername/speechpal.git
+cd speechpal
 ```
 
-2. Create a virtual environment:
-```bash
+### 2. Backend Setup
+
+``` bash
+cd backend
 python -m venv venv
 ```
 
-3. Activate the virtual environment:
-- Windows:
-```bash
+#### Activate Environment
+
+**Windows**
+
+``` bash
 venv\Scripts\activate
 ```
-- Unix/MacOS:
-```bash
+
+**Mac/Linux**
+
+``` bash
 source venv/bin/activate
 ```
 
-4. Install dependencies:
-```bash
+#### Install Dependencies
+
+``` bash
 pip install -r requirements.txt
 ```
 
-5. Start the backend server:
-```bash
+#### Run Server
+
+``` bash
 uvicorn app.main:app --reload
 ```
 
-The backend server will run on http://localhost:8000
+Backend runs at: http://localhost:8000
 
-### Frontend Setup
+------------------------------------------------------------------------
 
-1. Navigate to the frontend directory:
-```bash
+### 3. Frontend Setup
+
+``` bash
 cd frontend
-```
-
-2. Install dependencies:
-```bash
 npm install
-```
-
-3. Start the development server:
-```bash
 npm start
 ```
 
-The frontend application will run on http://localhost:3000
+Frontend runs at: http://localhost:3000
 
-## Usage
+------------------------------------------------------------------------
 
-1. Open http://localhost:3000 in your web browser
-2. Click "Start Recording" to begin recording your speech
-3. Speak into your microphone
-4. Click "Stop Recording" when finished
-5. View the analysis results and visualization
+## 🧪 Usage
 
-## API Endpoints
+1.  Open the app in your browser\
+2.  Click **"Start Recording"**\
+3.  Speak naturally into your microphone\
+4.  Click **"Stop Recording"**\
+5.  View analysis results
 
-- POST /api/analyze-speech: Analyze speech from audio file
-- GET /api/health: Health check endpoint
+------------------------------------------------------------------------
 
-## Technologies Used
+## 🔌 API Endpoints
 
-- Backend:
-  - FastAPI
-  - Whisper AI
-  - PyTorch
-  - Python
+### Analyze Speech
 
-- Frontend:
-  - React
-  - TypeScript
-  - Material-UI
-  - D3.js
-  - Axios 
+POST /api/analyze-speech
+
+### Health Check
+
+GET /api/health
+
+------------------------------------------------------------------------
+
+## 💡 Use Cases
+
+-   Public speaking coaching\
+-   Interview preparation\
+-   Sales call optimization\
+-   Presentation practice\
+-   Communication training
+
+------------------------------------------------------------------------
+
+## 🔮 Future Improvements
+
+-   Real-time (streaming) feedback\
+-   Speaker emotion detection\
+-   Personalized coaching suggestions\
+-   Mobile app integration
+
+------------------------------------------------------------------------
+
+## 📌 Summary
+
+SpeechPal goes beyond transcription --- it turns speech into actionable
+feedback.
+
+**From speech → to insight → to improvement**
